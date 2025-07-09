@@ -4,13 +4,16 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
-from datetime import date
+from datetime import datetime, date
 from .models import Categories, Expenses, Incomes, Budgets
 from .serializers import CategorySerializer, ExpenseSerializer, IncomeSerializer, BudgetSerializer
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    """Category's ViewSet"""
+    """カテゴリーのViewSet"""
     serializer_class = CategorySerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
@@ -18,14 +21,30 @@ class CategoryViewSet(viewsets.ModelViewSet):
     ordering = ['name']
     
     def get_queryset(self):
-        return Categories.objects.all()
+        # 全ユーザーが全カテゴリーを閲覧可能
+        queryset = Categories.objects.all()
+        
+        # カテゴリータイプでフィルタリング
+        is_expense = self.request.query_params.get('is_expense')
+        if is_expense is not None:
+            is_expense_bool = is_expense.lower() == 'true'
+            queryset = queryset.filter(is_expense=is_expense_bool)
+        
+        return queryset
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+    
+    def perform_update(self, serializer):
+        # 全ユーザーは自分が作成したデータのみ編集可能
+        instance = serializer.instance
+        if instance.created_by != self.request.user:
+            raise PermissionError("自分が作成したデータのみ編集可能です")
+        serializer.save()
 
 
 class ExpenseViewSet(viewsets.ModelViewSet):
-    """Expense's ViewSet"""
+    """支出のViewSet"""
     serializer_class = ExpenseSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
@@ -33,9 +52,15 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     ordering = ['-date', '-created_at']
     
     def get_queryset(self):
-        queryset = Expenses.objects.filter(user=self.request.user)
+        user = self.request.user
         
-        # filter
+        # 管理者は全支出を閲覧可能、一般ユーザーは自分の支出のみ閲覧可能
+        if user.is_superuser:
+            queryset = Expenses.objects.all()
+        else:
+            queryset = Expenses.objects.filter(user=user)
+        
+        # フィルタリング機能
         category = self.request.query_params.get('category')
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
@@ -60,10 +85,17 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+    
+    def perform_update(self, serializer):
+        # 全ユーザーは自分が作成したデータのみ編集可能
+        instance = serializer.instance
+        if instance.user != self.request.user:
+            raise PermissionError("自分が作成したデータのみ編集可能です")
+        serializer.save()
 
 
 class IncomeViewSet(viewsets.ModelViewSet):
-    """Income's ViewSet"""
+    """収入のViewSet"""
     serializer_class = IncomeSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
@@ -71,9 +103,15 @@ class IncomeViewSet(viewsets.ModelViewSet):
     ordering = ['-date', '-created_at']
     
     def get_queryset(self):
-        queryset = Incomes.objects.filter(user=self.request.user)
+        user = self.request.user
         
-        # filter
+        # 管理者は全収入を閲覧可能、一般ユーザーは自分の収入のみ閲覧可能
+        if user.is_superuser:
+            queryset = Incomes.objects.all()
+        else:
+            queryset = Incomes.objects.filter(user=user)
+        
+        # フィルタリング機能
         category = self.request.query_params.get('category')
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
@@ -98,10 +136,17 @@ class IncomeViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+    
+    def perform_update(self, serializer):
+        # 全ユーザーは自分が作成したデータのみ編集可能
+        instance = serializer.instance
+        if instance.user != self.request.user:
+            raise PermissionError("自分が作成したデータのみ編集可能です")
+        serializer.save()
 
 
 class BudgetViewSet(viewsets.ModelViewSet):
-    """Budget's ViewSet"""
+    """予算のViewSet"""
     serializer_class = BudgetSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
@@ -109,26 +154,49 @@ class BudgetViewSet(viewsets.ModelViewSet):
     ordering = ['-start_date', '-created_at']
     
     def get_queryset(self):
-        return Budgets.objects.filter(user=self.request.user)
+        user = self.request.user
+        
+        # 管理者は全予算を閲覧可能、一般ユーザーは自分の予算のみ閲覧可能
+        if user.is_superuser:
+            queryset = Budgets.objects.all()
+        else:
+            queryset = Budgets.objects.filter(user=user)
+        
+        return queryset
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+    
+    def perform_update(self, serializer):
+        # 全ユーザーは自分が作成したデータのみ編集可能
+        instance = serializer.instance
+        if instance.user != self.request.user:
+            raise PermissionError("自分が作成したデータのみ編集可能です")
+        serializer.save()
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def monthly_summary(request):
     """月別支出サマリー"""
+    user = request.user
+    
     # パラメータ処理
     year = int(request.GET.get('year', timezone.now().year))
     month = int(request.GET.get('month', timezone.now().month))
     
-    # 該当月の支出を取得
-    expenses = Expenses.objects.filter(
-        user=request.user,
-        date__year=year,
-        date__month=month
-    )
+    # 管理者は全ユーザーの支出を集計、一般ユーザーは自分の支出のみ
+    if user.is_superuser:
+        expenses = Expenses.objects.filter(
+            date__year=year,
+            date__month=month
+        )
+    else:
+        expenses = Expenses.objects.filter(
+            user=user,
+            date__year=year,
+            date__month=month
+        )
     
     # 総支出額
     total = expenses.aggregate(total=Sum('amount'))['total'] or 0
