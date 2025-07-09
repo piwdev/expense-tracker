@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
-from datetime import datetime, date
+from datetime import date
 from .models import Categories, Expenses, Incomes, Budgets
 from .serializers import CategorySerializer, ExpenseSerializer, IncomeSerializer, BudgetSerializer
 
@@ -18,7 +18,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
     ordering = ['name']
     
     def get_queryset(self):
-        return Categories.objects.filter(created_by=self.request.user)
+        return Categories.objects.all()
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
